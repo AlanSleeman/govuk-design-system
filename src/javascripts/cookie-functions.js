@@ -13,6 +13,12 @@ import Analytics from './components/analytics.js'
 /* Name of the cookie to save users cookie preferences to. */
 const CONSENT_COOKIE_NAME = 'design_system_cookies_policy'
 
+/* If cookie policy changes and/or the user preferences object format needs to
+ * change, bump this version up afterwards. The user should then be shown the
+ * banner again to consent to the new policy.
+ */
+const CONSENT_COOKIE_VERSION = 1
+
 /* Users can (dis)allow different groups of cookies. */
 const COOKIE_CATEGORIES = {
   _ga: 'analytics',
@@ -68,7 +74,11 @@ export function Cookie (name, value, options) {
   }
 }
 
-/** Return the user's cookie preferences. */
+/** Return the user's cookie preferences.
+ *
+ * If the consent cookie is malformed, or not present,
+ * returns null.
+ */
 export function getConsentCookie () {
   var consentCookie = getCookie(CONSENT_COOKIE_NAME)
   var consentCookieObj
@@ -94,7 +104,42 @@ export function setConsentCookie (options) {
     cookieConsent = JSON.parse(JSON.stringify(DEFAULT_COOKIE_CONSENT))
   }
 
+  // Merge current cookie preferences and new preferences
+  cookieConsent = {
+    ...cookieConsent,
+    ...options
+  }
+
+  // Essential cookies cannot be deselected, ignore this cookie type
+  delete cookieConsent.essential
+
+  cookieConsent.version = CONSENT_COOKIE_VERSION
+
+  // Set the consent cookie
+  setCookie(CONSENT_COOKIE_NAME, JSON.stringify(cookieConsent), { days: 365 })
+
+  // Update the other cookies
+  resetCookies()
+}
+
+
+/** Apply the user's cookie preferences
+ *
+ * Deletes any cookies the user has not consented to.
+ */
+export function resetCookies () {
+  var options = getConsentCookie()
+
+  // If no preferences or old version use the default
+  if (!options || options.version !== CONSENT_COOKIE_VERSION) {
+    options = JSON.parse(JSON.stringify(DEFAULT_COOKIE_CONSENT))
+  }
+
   for (var cookieType in options) {
+    if (cookieType == 'version') {
+      continue
+    }
+
     // Essential cookies cannot be deselected, ignore this cookie type
     if (cookieType === 'essential') {
       continue
@@ -105,10 +150,8 @@ export function setConsentCookie (options) {
       Analytics()
     }
 
-    // Update existing user cookie consent preferences
-    cookieConsent[cookieType] = options[cookieType]
 
-    // Delete cookies of that type if consent being set to false
+    // Delete cookies of that type if consent is false
     if (!options[cookieType]) {
       for (var cookie in COOKIE_CATEGORIES) {
         if (COOKIE_CATEGORIES[cookie] === cookieType) {
@@ -121,9 +164,6 @@ export function setConsentCookie (options) {
       }
     }
   }
-
-  // Set consent cookie
-  setCookie(CONSENT_COOKIE_NAME, JSON.stringify(cookieConsent), { days: 365 })
 }
 
 function userAllowsCookieCategory (cookieCategory, cookiePreferences) {
@@ -150,8 +190,13 @@ function userAllowsCookie (cookieName) {
   if (COOKIE_CATEGORIES[cookieName]) {
     var cookieCategory = COOKIE_CATEGORIES[cookieName]
 
-    // Get the current cookie preferences, or the default if no preferences set
-    var cookiePreferences = getConsentCookie() || DEFAULT_COOKIE_CONSENT
+    // Get the current cookie preferences
+    var cookiePreferences = getConsentCookie()
+
+    // If no preferences or old version use the default
+    if (!cookiePreferences || cookiePreferences.version !== CONSENT_COOKIE_VERSION) {
+      var cookiePreferences = DEFAULT_COOKIE_CONSENT
+    }
 
     return userAllowsCookieCategory(cookieCategory, cookiePreferences)
   } else {
